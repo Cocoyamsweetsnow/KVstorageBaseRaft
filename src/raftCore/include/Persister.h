@@ -1,6 +1,4 @@
-//
-// Created by swx on 23-5-30.
-//
+
 
 #ifndef SKIP_LIST_ON_RAFT_PERSISTER_H
 #define SKIP_LIST_ON_RAFT_PERSISTER_H

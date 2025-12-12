@@ -1,6 +1,4 @@
-//
-// Created by swx on 24-1-4.
-//
+
 
 #ifndef RAFTSERVERRPC_H
 #define RAFTSERVERRPC_H

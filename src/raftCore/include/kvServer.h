@@ -1,6 +1,4 @@
-//
-// Created by swx on 23-6-1.
-//
+
 
 #ifndef SKIP_LIST_ON_RAFT_KVSERVER_H
 #define SKIP_LIST_ON_RAFT_KVSERVER_H

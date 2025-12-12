@@ -1,6 +1,4 @@
-//
-// Created by swx on 23-12-28.
-//
+
 
 #ifndef RAFTRPC_H
 #define RAFTRPC_H
