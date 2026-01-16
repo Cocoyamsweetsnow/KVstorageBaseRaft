@@ -1,5 +1,3 @@
-
-
 #ifndef SKIP_LIST_ON_RAFT_KVSERVER_H
 #define SKIP_LIST_ON_RAFT_KVSERVER_H
 
@@ -28,7 +26,6 @@ class KvServer : raftKVRpcProctoc::kvServerRpc {
   std::shared_ptr<LockQueue<ApplyMsg> > applyChan;  // kvServer和raft节点的通信管道
   int m_maxRaftState;                               // snapshot if log grows this big
 
-  // Your definitions here.
   std::string m_serializedKVData;  // todo ： 序列化后的kv数据，理论上可以不用，但是目前没有找到特别好的替代方法
   SkipList<std::string, std::string> m_skipList;
   std::unordered_map<std::string, std::string> m_kvDB;
@@ -59,9 +56,8 @@ class KvServer : raftKVRpcProctoc::kvServerRpc {
   void Get(const raftKVRpcProctoc::GetArgs *args,
            raftKVRpcProctoc::GetReply
                *reply);  //将 GetArgs 改为rpc调用的，因为是远程客户端，即服务器宕机对客户端来说是无感的
-  /**
-   * 從raft節點中獲取消息  （不要誤以爲是執行【GET】命令）
-   * @param message
+  /*
+    从raft节点中获取消息  （不要误以为是执行【GET】命令）
    */
   void GetCommandFromRaft(ApplyMsg message);
 
@@ -92,14 +88,9 @@ class KvServer : raftKVRpcProctoc::kvServerRpc {
   void Get(google::protobuf::RpcController *controller, const ::raftKVRpcProctoc::GetArgs *request,
            ::raftKVRpcProctoc::GetReply *response, ::google::protobuf::Closure *done) override;
 
-  /////////////////serialiazation start ///////////////////////////////
-  // notice ： func serialize
  private:
   friend class boost::serialization::access;
 
-  // When the class Archive corresponds to an output archive, the
-  // & operator is defined similar to <<.  Likewise, when the class Archive
-  // is a type of input archive the & operator is defined similar to >>.
   template <class Archive>
   void serialize(Archive &ar, const unsigned int version)  //这里面写需要序列话和反序列化的字段
   {
@@ -126,7 +117,7 @@ class KvServer : raftKVRpcProctoc::kvServerRpc {
     m_serializedKVData.clear();
   }
 
-  /////////////////serialiazation end ///////////////////////////////
+  
 };
 
 #endif  // SKIP_LIST_ON_RAFT_KVSERVER_H

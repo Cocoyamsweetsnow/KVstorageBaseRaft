@@ -19,7 +19,7 @@
 #include "monsoon.h"
 #include "raftRpcUtil.h"
 #include "util.h"
-/// @brief //////////// 网络状态表示  todo：可以在rpc中删除该字段，实际生产中是用不到的.
+
 constexpr int Disconnected =
     0;  // 方便网络分区的时候debug，网络异常的时候为disconnected，只要网络正常就为AppNormal，防止matchIndex[]数组异常减小
 constexpr int AppNormal = 1;
@@ -74,9 +74,9 @@ class Raft : public raftRpcProctoc::raftRpc {
   void applierTicker();
   bool CondInstallSnapshot(int lastIncludedTerm, int lastIncludedIndex, std::string snapshot);
   void doElection();
-  /**
-   * \brief 发起心跳，只有leader才需要发起心跳
-   */
+  /*
+  发起心跳，只有leader才需要发起心跳
+  */
   void doHeartBeat();
   // 每隔一段时间检查睡眠时间内有没有重置定时器，没有则说明超时了
   // 如果有则设置合适睡眠时间：睡眠到重置时间+超时时间
@@ -114,10 +114,6 @@ class Raft : public raftRpcProctoc::raftRpc {
 
   void Start(Op command, int *newLogIndex, int *newLogTerm, bool *isLeader);
 
-  // Snapshot the service says it has created a snapshot that has
-  // all info up to and including index. this means the
-  // service no longer needs the log through (and including)
-  // that index. Raft should now trim its log as much as possible.
   // index代表是快照apply应用的index,而snapshot代表的是上层service传来的快照字节流，包括了Index之前的数据
   // 这个函数的目的是把安装到快照里的日志抛弃，并安装快照数据，同时更新快照下标，属于peers自身主动更新，与leader发送快照不冲突
   // 即服务层主动发起请求raft保存snapshot里面的数据，index是用来表示snapshot快照执行到了哪条命令
@@ -144,9 +140,7 @@ class Raft : public raftRpcProctoc::raftRpc {
   class BoostPersistRaftNode {
    public:
     friend class boost::serialization::access;
-    // When the class Archive corresponds to an output archive, the
-    // & operator is defined similar to <<.  Likewise, when the class Archive
-    // is a type of input archive the & operator is defined similar to >>.
+    
     template <class Archive>
     void serialize(Archive &ar, const unsigned int version) {
       ar &m_currentTerm;

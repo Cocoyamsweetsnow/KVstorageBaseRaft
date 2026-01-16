@@ -1,12 +1,9 @@
-
 #include "clerk.h"
-
 #include "raftServerRpcUtil.h"
-
 #include "util.h"
-
 #include <string>
 #include <vector>
+
 std::string Clerk::Get(std::string key) {
   m_requestId++;
   auto requestId = m_requestId;
@@ -37,7 +34,6 @@ std::string Clerk::Get(std::string key) {
 }
 
 void Clerk::PutAppend(std::string key, std::string value, std::string op) {
-  // You will have to modify this function.
   m_requestId++;
   auto requestId = m_requestId;
   auto server = m_recentLeaderId;
@@ -54,10 +50,10 @@ void Clerk::PutAppend(std::string key, std::string value, std::string op) {
       DPrintf("【Clerk::PutAppend】原以为的leader：{%d}请求失败，向新leader{%d}重试  ，操作：{%s}", server, server + 1,
               op.c_str());
       if (!ok) {
-        DPrintf("重试原因 ，rpc失敗 ，");
+        DPrintf("重试原因 ，rpc失败 ，");
       }
       if (reply.err() == ErrWrongLeader) {
-        DPrintf("重試原因：非leader");
+        DPrintf("重试原因：非leader");
       }
       server = (server + 1) % m_servers.size();  // try the next server
       continue;
@@ -92,7 +88,7 @@ void Clerk::Init(std::string configFileName) {
   for (const auto& item : ipPortVt) {
     std::string ip = item.first;
     short port = item.second;
-    // 2024-01-04 todo：bug fix
+    
     auto* rpc = new raftServerRpcUtil(ip, port);
     m_servers.push_back(std::shared_ptr<raftServerRpcUtil>(rpc));
   }

@@ -1,4 +1,3 @@
-
 #ifndef UTIL_H
 #define UTIL_H
 
@@ -8,10 +7,10 @@
 #include <boost/archive/text_iarchive.hpp>
 #include <boost/archive/text_oarchive.hpp>
 #include <boost/serialization/access.hpp>
-#include <condition_variable>  // pthread_condition_t
+#include <condition_variable>  
 #include <functional>
 #include <iostream>
-#include <mutex>  // pthread_mutex_t
+#include <mutex>  
 #include <queue>
 #include <random>
 #include <sstream>
@@ -57,7 +56,7 @@ std::chrono::_V2::system_clock::time_point now();
 std::chrono::milliseconds getRandomizedElectionTimeout();
 void sleepNMilliseconds(int N);
 
-// ////////////////////////异步写日志的日志队列
+// 异步写日志的日志队列
 // read is blocking!!! LIKE  go chan
 template <typename T>
 class LockQueue {
@@ -153,7 +152,7 @@ class Op {
     boost::archive::text_iarchive ia(iss);
     // read class state from archive
     ia >> *this;
-    return true;  // todo : 解析失敗如何處理，要看一下boost庫了
+    return true;  
   }
 
  public:

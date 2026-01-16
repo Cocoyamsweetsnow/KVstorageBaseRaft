@@ -1,4 +1,3 @@
-
 #include "Persister.h"
 #include "util.h"
 

@@ -9,7 +9,7 @@
 void ShowArgsHelp();
 
 int main(int argc, char **argv) {
-  //////////////////////////////////读取命令参数：节点数量、写入raft节点节点信息到哪个文件
+  //读取命令参数：节点数量、写入raft节点节点信息到哪个文件
   if (argc < 2) {
     ShowArgsHelp();
     exit(EXIT_FAILURE);

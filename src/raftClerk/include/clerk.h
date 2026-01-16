@@ -1,5 +1,3 @@
-
-
 #ifndef SKIP_LIST_ON_RAFT_CLERK_H
 #define SKIP_LIST_ON_RAFT_CLERK_H
 #include <arpa/inet.h>
@@ -25,7 +23,6 @@ class Clerk {
     return std::to_string(rand()) + std::to_string(rand()) + std::to_string(rand()) + std::to_string(rand());
   }  //用于返回随机的clientId
 
-  //    MakeClerk  todo
   void PutAppend(std::string key, std::string value, std::string op);
 
  public:

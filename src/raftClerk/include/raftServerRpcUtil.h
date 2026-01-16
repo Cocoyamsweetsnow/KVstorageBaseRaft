@@ -1,5 +1,3 @@
-
-
 #ifndef RAFTSERVERRPC_H
 #define RAFTSERVERRPC_H
 
@@ -9,7 +7,7 @@
 #include "mprpccontroller.h"
 #include "rpcprovider.h"
 
-/// @brief 维护当前节点对其他某一个结点的所有rpc通信，包括接收其他节点的rpc和发送
+// 维护当前节点对其他某一个结点的所有rpc通信，包括接收其他节点的rpc和发送
 // 对于一个节点来说，对于任意其他的节点都要维护一个rpc连接，
 class raftServerRpcUtil {
  private:
