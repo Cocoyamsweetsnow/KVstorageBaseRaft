@@ -4,11 +4,11 @@
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/message.h>
 #include <google/protobuf/service.h>
-#include <algorithm>  // 包含 std::generate_n() 和 std::generate() 函数的头文件
+#include <algorithm>  
 #include <functional>
 #include <iostream>
 #include <map>
-#include <random>  // 包含 std::uniform_int_distribution 类型的头文件
+#include <random>  
 #include <string>
 #include <unordered_map>
 #include <vector>
