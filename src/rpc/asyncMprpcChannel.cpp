@@ -12,6 +12,7 @@
 
 #include "mprpccontroller.h"
 #include "rpcheader.pb.h"
+#include "serviceDiscovery.h"
 #include "util.h"
 
 namespace rpc {
@@ -21,6 +22,7 @@ AsyncMprpcChannel::AsyncMprpcChannel(const std::string& ip, short port,
     : clientFd_(-1)
     , ip_(ip)
     , port_(port)
+    , useDiscovery_(false)
     , nextCallId_(1)
     , defaultTimeoutMs_(5000)  // 默认5秒超时
     , running_(true)
@@ -39,6 +41,27 @@ AsyncMprpcChannel::AsyncMprpcChannel(const std::string& ip, short port,
         }
     }
 
+    // 启动I/O线程
+    for (int i = 0; i < ioThreads; ++i) {
+        ioThreads_.emplace_back(&AsyncMprpcChannel::ioThreadFunc, this);
+    }
+}
+
+AsyncMprpcChannel::AsyncMprpcChannel(const std::string& serviceName,
+                                     std::shared_ptr<ServiceDiscovery> discovery,
+                                     const std::string& hashKey,
+                                     int ioThreads)
+    : clientFd_(-1)
+    , port_(0)
+    , serviceName_(serviceName)
+    , discovery_(discovery)
+    , hashKey_(hashKey)
+    , useDiscovery_(true)
+    , nextCallId_(1)
+    , defaultTimeoutMs_(5000)
+    , running_(true)
+    , nonBlocking_(true) {
+    
     // 启动I/O线程
     for (int i = 0; i < ioThreads; ++i) {
         ioThreads_.emplace_back(&AsyncMprpcChannel::ioThreadFunc, this);
@@ -66,6 +89,31 @@ AsyncMprpcChannel::~AsyncMprpcChannel() {
         }
     }
     pendingCalls_.clear();
+}
+
+void AsyncMprpcChannel::setHashKey(const std::string& hashKey) {
+    hashKey_ = hashKey;
+}
+
+bool AsyncMprpcChannel::resolveServiceAddress() {
+    if (!discovery_) {
+        DPrintf("[AsyncMprpcChannel] Service discovery is null");
+        return false;
+    }
+
+    ServiceInstance instance = discovery_->selectInstance(serviceName_, hashKey_);
+    if (!instance.isValid()) {
+        DPrintf("[AsyncMprpcChannel] No available instance for service: %s", 
+                serviceName_.c_str());
+        return false;
+    }
+
+    ip_ = instance.ip;
+    port_ = instance.port;
+
+    DPrintf("[AsyncMprpcChannel] Resolved service %s to %s:%d", 
+            serviceName_.c_str(), ip_.c_str(), port_);
+    return true;
 }
 
 bool AsyncMprpcChannel::newConnect(const char* ip, uint16_t port, std::string* errMsg) {
@@ -117,6 +165,14 @@ void AsyncMprpcChannel::disconnect() {
 
 bool AsyncMprpcChannel::reconnect() {
     closeConnection();
+    
+    // 如果使用服务发现，先解析地址
+    if (useDiscovery_) {
+        if (!resolveServiceAddress()) {
+            return false;
+        }
+    }
+    
     std::string errMsg;
     return newConnect(ip_.c_str(), port_, &errMsg);
 }
@@ -265,6 +321,17 @@ GenericRpcFuture::ptr AsyncMprpcChannel::callMethodAsync(
     {
         std::lock_guard<std::mutex> lock(pendingMutex_);
         pendingCalls_[callId] = context;
+    }
+
+    // 如果使用服务发现模式，先解析地址
+    if (useDiscovery_ && (ip_.empty() || port_ == 0)) {
+        if (!resolveServiceAddress()) {
+            std::lock_guard<std::mutex> plock(pendingMutex_);
+            pendingCalls_.erase(callId);
+            std::string errMsg = "Failed to resolve service address for: " + serviceName_;
+            context->future->complete(RpcStatus::FAILED, nullptr, errMsg);
+            return context->future;
+        }
     }
 
     // 检查连接

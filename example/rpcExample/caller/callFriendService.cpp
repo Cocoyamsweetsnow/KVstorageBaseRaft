@@ -22,7 +22,7 @@ int main(int argc, char **argv)
     fixbug::GetFriendsListResponse response;
     // 发起rpc方法的调用,消费这的stub最后都会调用到channel的 call_method方法  同步的rpc调用过程 MprpcChannel::callmethod
     MprpcController controller;
-    //長連接測試 ，發送10次請求
+    //长连接测试，发送10次请求
     int count = 10;
     while (count--)
     {

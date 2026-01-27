@@ -19,6 +19,8 @@
 
 #include "rpcFuture.h"
 
+class ServiceDiscovery;
+
 namespace rpc
 {
 
@@ -304,6 +306,7 @@ private:
 };
 
 // 基于连接池的RPC Channel，使用连接池进行RPC调用
+// 支持两种模式：直接指定IP端口，或通过服务发现自动获取
 class PooledMprpcChannel : public google::protobuf::RpcChannel
 {
 public:
@@ -315,6 +318,18 @@ public:
     // 便捷构造函数（自动从管理器获取连接池）
     PooledMprpcChannel(const std::string &ip, uint16_t port,
                        const ConnectionPoolConfig &config = ConnectionPoolConfig(), int64_t defaultTimeoutMs = 5000);
+
+    // 构造函数：通过服务发现获取服务地址
+    // serviceName: 服务名称
+    // discovery: 服务发现组件
+    // hashKey: 用于一致性哈希的key
+    // config: 连接池配置
+    // defaultTimeoutMs: 默认超时时间
+    PooledMprpcChannel(const std::string& serviceName,
+                       std::shared_ptr<ServiceDiscovery> discovery,
+                       const std::string& hashKey = "",
+                       const ConnectionPoolConfig& config = ConnectionPoolConfig(),
+                       int64_t defaultTimeoutMs = 5000);
 
     ~PooledMprpcChannel() override;
 
@@ -340,9 +355,26 @@ public:
     int64_t getDefaultTimeout() const { return defaultTimeoutMs_; }
     RpcConnectionPool::ptr getPool() const { return pool_; }
 
+    // 设置一致性哈希key
+    void setHashKey(const std::string& hashKey);
+
+    // 检查是否使用服务发现模式
+    bool isServiceDiscoveryMode() const { return useDiscovery_; }
+
+private:
+    // 通过服务发现获取连接池
+    bool resolveServicePool();
+
 private:
     RpcConnectionPool::ptr pool_;
     int64_t defaultTimeoutMs_;
+
+    // 服务发现相关
+    std::string serviceName_;
+    std::shared_ptr<ServiceDiscovery> discovery_;
+    std::string hashKey_;
+    bool useDiscovery_ = false;
+    ConnectionPoolConfig poolConfig_;
 };
 
 } // namespace rpc

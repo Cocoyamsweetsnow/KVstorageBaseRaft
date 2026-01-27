@@ -11,8 +11,10 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <iostream>
 
 #include "include/rpcheader.pb.h"
+#include "include/serviceDiscovery.h"
 #include "../common/include/util.h"
 
 namespace rpc {
@@ -782,10 +784,60 @@ PooledMprpcChannel::PooledMprpcChannel(const std::string& ip, uint16_t port,
                                        const ConnectionPoolConfig& config,
                                        int64_t defaultTimeoutMs)
     : pool_(ConnectionPoolManager::getInstance().getPool(ip, port, config))
-    , defaultTimeoutMs_(defaultTimeoutMs) {
+    , defaultTimeoutMs_(defaultTimeoutMs)
+    , useDiscovery_(false) {
+}
+
+PooledMprpcChannel::PooledMprpcChannel(const std::string& serviceName,
+                                       std::shared_ptr<ServiceDiscovery> discovery,
+                                       const std::string& hashKey,
+                                       const ConnectionPoolConfig& config,
+                                       int64_t defaultTimeoutMs)
+    : defaultTimeoutMs_(defaultTimeoutMs)
+    , serviceName_(serviceName)
+    , discovery_(discovery)
+    , hashKey_(hashKey)
+    , useDiscovery_(true)
+    , poolConfig_(config) {
+    // 延迟解析服务地址，在首次调用时解析
 }
 
 PooledMprpcChannel::~PooledMprpcChannel() = default;
+
+void PooledMprpcChannel::setHashKey(const std::string& hashKey) {
+    hashKey_ = hashKey;
+    // 如果使用服务发现，可能需要重新选择服务实例
+    if (useDiscovery_) {
+        pool_.reset();  // 清空当前连接池，下次调用时重新解析
+    }
+}
+
+bool PooledMprpcChannel::resolveServicePool() {
+    if (!discovery_) {
+        std::cerr << "[PooledMprpcChannel] Service discovery is null" << std::endl;
+        return false;
+    }
+
+    // 使用服务发现获取服务实例
+    ServiceInstance instance = discovery_->selectInstance(serviceName_, hashKey_);
+    if (!instance.isValid()) {
+        std::cerr << "[PooledMprpcChannel] No available instance for service: " 
+                  << serviceName_ << std::endl;
+        return false;
+    }
+
+    // 获取或创建连接池
+    pool_ = ConnectionPoolManager::getInstance().getPool(instance.ip, instance.port, poolConfig_);
+    if (!pool_) {
+        std::cerr << "[PooledMprpcChannel] Failed to create connection pool for: " 
+                  << instance.ip << ":" << instance.port << std::endl;
+        return false;
+    }
+
+    std::cout << "[PooledMprpcChannel] Resolved service " << serviceName_ 
+              << " to " << instance.ip << ":" << instance.port << std::endl;
+    return true;
+}
 
 void PooledMprpcChannel::CallMethod(const google::protobuf::MethodDescriptor* method,
                                     google::protobuf::RpcController* controller,
@@ -795,6 +847,20 @@ void PooledMprpcChannel::CallMethod(const google::protobuf::MethodDescriptor* me
     auto startTime = std::chrono::steady_clock::now();
     bool success = false;
     std::string errMsg;
+    
+    // 如果使用服务发现模式，先解析服务地址
+    if (useDiscovery_ && !pool_) {
+        if (!resolveServicePool()) {
+            errMsg = "Failed to resolve service: " + serviceName_;
+            if (controller) {
+                controller->SetFailed(errMsg);
+            }
+            if (done) {
+                done->Run();
+            }
+            return;
+        }
+    }
     
     // 从连接池获取连接
     ConnectionGuard guard(pool_);
@@ -852,6 +918,18 @@ GenericRpcFuture::ptr PooledMprpcChannel::callMethodAsync(
     int64_t timeoutMs) {
     
     auto future = std::make_shared<GenericRpcFuture>();
+    
+    // 如果使用服务发现模式，先解析服务地址
+    if (useDiscovery_ && !pool_) {
+        if (!resolveServicePool()) {
+            std::string errMsg = "Failed to resolve service: " + serviceName_;
+            if (controller) {
+                controller->SetFailed(errMsg);
+            }
+            future->complete(RpcStatus::FAILED, nullptr, errMsg);
+            return future;
+        }
+    }
     
     // 在新线程中执行异步调用
     std::thread([this, method, controller, request, response, timeoutMs, future]() {

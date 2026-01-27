@@ -16,6 +16,8 @@
 
 #include "rpcFuture.h"
 
+class ServiceDiscovery;
+
 namespace rpc
 {
 
@@ -37,7 +39,18 @@ class AsyncMprpcChannel : public google::protobuf::RpcChannel
 public:
     using ptr = std::shared_ptr<AsyncMprpcChannel>;
 
+    // 构造函数：直接指定IP和端口
     AsyncMprpcChannel(const std::string &ip, short port, bool connectNow = true, int ioThreads = 1);
+
+    // 构造函数：通过服务发现获取服务地址
+    // serviceName: 服务名称
+    // discovery: 服务发现组件
+    // hashKey: 用于一致性哈希的key
+    // ioThreads: I/O线程数量
+    AsyncMprpcChannel(const std::string& serviceName,
+                      std::shared_ptr<ServiceDiscovery> discovery,
+                      const std::string& hashKey = "",
+                      int ioThreads = 1);
 
     ~AsyncMprpcChannel();
 
@@ -73,10 +86,19 @@ public:
     
     size_t getPendingCallCount() const;
 
+    // 设置一致性哈希key
+    void setHashKey(const std::string& hashKey);
+
+    // 检查是否使用服务发现模式
+    bool isServiceDiscoveryMode() const { return useDiscovery_; }
+
 private:
     // 连接管理
     bool newConnect(const char *ip, uint16_t port, std::string *errMsg);
     void closeConnection();
+
+    // 通过服务发现解析地址
+    bool resolveServiceAddress();
 
     // 发送RPC请求
     bool sendRequest(const google::protobuf::MethodDescriptor *method, const google::protobuf::Message *request,
@@ -97,8 +119,14 @@ private:
 private:
     // 连接信息
     int clientFd_;
-    const std::string ip_;
-    const uint16_t port_;
+    std::string ip_;
+    uint16_t port_;
+
+    // 服务发现相关
+    std::string serviceName_;
+    std::shared_ptr<ServiceDiscovery> discovery_;
+    std::string hashKey_;
+    bool useDiscovery_;
 
     // 线程安全
     mutable std::mutex mutex_;

@@ -7,12 +7,89 @@
 #include <string>
 #include "mprpccontroller.h"
 #include "rpcheader.pb.h"
+#include "serviceDiscovery.h"
 #include "util.h"
 
+MprpcChannel::MprpcChannel(std::string ip, short port, bool connectNow) 
+    : m_ip(ip)
+    , m_port(port)
+    , m_clientFd(-1)
+    , m_useDiscovery(false) {
+  // 使用tcp编程，完成rpc方法的远程调用
+  if (!connectNow) {
+    return;
+  }
+  std::string errMsg;
+  auto rt = newConnect(ip.c_str(), port, &errMsg);
+  int tryCount = 3;
+  while (!rt && tryCount--) {
+    std::cout << errMsg << std::endl;
+    rt = newConnect(ip.c_str(), port, &errMsg);
+  }
+}
+
+MprpcChannel::MprpcChannel(const std::string& serviceName, 
+                           std::shared_ptr<ServiceDiscovery> discovery,
+                           const std::string& hashKey)
+    : m_clientFd(-1)
+    , m_port(0)
+    , m_serviceName(serviceName)
+    , m_discovery(discovery)
+    , m_hashKey(hashKey)
+    , m_useDiscovery(true) {
+  // 服务发现模式，延迟解析服务地址
+}
+
+MprpcChannel::~MprpcChannel() {
+  if (m_clientFd != -1) {
+    close(m_clientFd);
+    m_clientFd = -1;
+  }
+}
+
+void MprpcChannel::setHashKey(const std::string& hashKey) {
+  m_hashKey = hashKey;
+}
+
+bool MprpcChannel::isServiceDiscoveryMode() const {
+  return m_useDiscovery;
+}
+
+bool MprpcChannel::resolveServiceAddress() {
+  if (!m_discovery) {
+    std::cerr << "[MprpcChannel] Service discovery is null" << std::endl;
+    return false;
+  }
+
+  // 使用一致性哈希选择服务实例
+  ServiceInstance instance = m_discovery->selectInstance(m_serviceName, m_hashKey);
+  if (!instance.isValid()) {
+    std::cerr << "[MprpcChannel] No available instance for service: " 
+              << m_serviceName << std::endl;
+    return false;
+  }
+
+  m_ip = instance.ip;
+  m_port = instance.port;
+
+  std::cout << "[MprpcChannel] Resolved service " << m_serviceName 
+            << " to " << m_ip << ":" << m_port << std::endl;
+  return true;
+}
 
 void MprpcChannel::CallMethod(const google::protobuf::MethodDescriptor* method,
-                              google::protobuf::RpcController* controller, const google::protobuf::Message* request,
-                              google::protobuf::Message* response, google::protobuf::Closure* done) {
+                              google::protobuf::RpcController* controller, 
+                              const google::protobuf::Message* request,
+                              google::protobuf::Message* response, 
+                              google::protobuf::Closure* done) {
+  // 如果使用服务发现模式，先解析服务地址
+  if (m_useDiscovery) {
+    if (!resolveServiceAddress()) {
+      controller->SetFailed("Failed to resolve service address for: " + m_serviceName);
+      return;
+    }
+  }
+
   if (m_clientFd == -1) {
     std::string errMsg;
     bool rt = newConnect(m_ip.c_str(), m_port, &errMsg);
@@ -94,7 +171,7 @@ void MprpcChannel::CallMethod(const google::protobuf::MethodDescriptor* method,
   }
 }
 
-bool MprpcChannel::newConnect(const char* ip, uint16_t port, string* errMsg) {
+bool MprpcChannel::newConnect(const char* ip, uint16_t port, std::string* errMsg) {
   int clientfd = socket(AF_INET, SOCK_STREAM, 0);
   if (-1 == clientfd) {
     char errtxt[512] = {0};
@@ -119,24 +196,4 @@ bool MprpcChannel::newConnect(const char* ip, uint16_t port, string* errMsg) {
   }
   m_clientFd = clientfd;
   return true;
-}
-
-MprpcChannel::MprpcChannel(string ip, short port, bool connectNow) : m_ip(ip), m_port(port), m_clientFd(-1) {
-  // 使用tcp编程，完成rpc方法的远程调用，使用的是短连接，因此每次都要重新连接上去，待改成长连接。
-  // 没有连接或者连接已经断开，那么就要重新连接呢,会一直不断地重试
-  // 读取配置文件rpcserver的信息
-  // std::string ip = MprpcApplication::GetInstance().GetConfig().Load("rpcserverip");
-  // uint16_t port = atoi(MprpcApplication::GetInstance().GetConfig().Load("rpcserverport").c_str());
-  // rpc调用方想调用service_name的method_name服务，需要查询zk上该服务所在的host信息
-  //  /UserServiceRpc/Login
-  if (!connectNow) {
-    return;
-  }  //可以允许延迟连接
-  std::string errMsg;
-  auto rt = newConnect(ip.c_str(), port, &errMsg);
-  int tryCount = 3;
-  while (!rt && tryCount--) {
-    std::cout << errMsg << std::endl;
-    rt = newConnect(ip.c_str(), port, &errMsg);
-  }
 }

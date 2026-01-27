@@ -6,8 +6,21 @@
 #include <fstream>
 #include <string>
 #include "rpcheader.pb.h"
+#include "serviceRegistry.h"
 #include "util.h"
 
+RpcProvider::RpcProvider() = default;
+
+RpcProvider::~RpcProvider() {
+  std::cout << "[func - RpcProvider::~RpcProvider()]: ip和port信息：" << m_muduo_server->ipPort() << std::endl;
+  
+  // 注销服务
+  if (m_serviceRegistry) {
+    m_serviceRegistry->shutdown();
+  }
+  
+  m_eventLoop.quit();
+}
 
 void RpcProvider::NotifyService(google::protobuf::Service *service) {
   ServiceInfo service_info;
@@ -30,6 +43,54 @@ void RpcProvider::NotifyService(google::protobuf::Service *service) {
   m_serviceMap.insert({service_name, service_info});
 }
 
+void RpcProvider::setZkAddress(const std::string& zkAddress) {
+  m_zkAddress = zkAddress;
+}
+
+bool RpcProvider::isRegistryEnabled() const {
+  return !m_zkAddress.empty();
+}
+
+std::vector<std::string> RpcProvider::getServiceNames() const {
+  std::vector<std::string> names;
+  names.reserve(m_serviceMap.size());
+  for (const auto& pair : m_serviceMap) {
+    names.push_back(pair.first);
+  }
+  return names;
+}
+
+bool RpcProvider::initServiceRegistry() {
+  if (m_zkAddress.empty()) {
+    return false;
+  }
+
+  m_serviceRegistry = std::make_shared<ServiceRegistry>(m_zkAddress);
+  if (!m_serviceRegistry->init()) {
+    std::cerr << "[RpcProvider] Failed to init service registry" << std::endl;
+    m_serviceRegistry.reset();
+    return false;
+  }
+
+  return true;
+}
+
+void RpcProvider::registerAllServices() {
+  if (!m_serviceRegistry) {
+    return;
+  }
+
+  std::vector<std::string> serviceNames = getServiceNames();
+  for (const auto& serviceName : serviceNames) {
+    if (m_serviceRegistry->registerService(serviceName, m_localIp, m_localPort)) {
+      std::cout << "[RpcProvider] Registered service to ZK: " << serviceName 
+                << " at " << m_localIp << ":" << m_localPort << std::endl;
+    } else {
+      std::cerr << "[RpcProvider] Failed to register service: " << serviceName << std::endl;
+    }
+  }
+}
+
 // 启动rpc服务节点，开始提供rpc远程网络调用服务
 void RpcProvider::Run(int nodeIndex, short port) {
   //获取可用ip
@@ -42,6 +103,10 @@ void RpcProvider::Run(int nodeIndex, short port) {
     ipC = inet_ntoa(*(struct in_addr *)(hent->h_addr_list[i]));  // IP地址
   }
   std::string ip = std::string(ipC);
+  
+  // 保存本地IP和端口
+  m_localIp = ip;
+  m_localPort = port;
 
   //写入文件 "test.conf"
   std::string node = "node" + std::to_string(nodeIndex);
@@ -54,6 +119,13 @@ void RpcProvider::Run(int nodeIndex, short port) {
   outfile << node + "ip=" + ip << std::endl;
   outfile << node + "port=" + std::to_string(port) << std::endl;
   outfile.close();
+
+  // 初始化服务注册（如果配置了ZK地址）
+  if (isRegistryEnabled()) {
+    if (initServiceRegistry()) {
+      registerAllServices();
+    }
+  }
 
   //创建服务器
   muduo::net::InetAddress address(ip, port);
@@ -181,10 +253,4 @@ void RpcProvider::SendRpcResponse(const muduo::net::TcpConnectionPtr &conn, goog
     std::cout << "serialize response_str error!" << std::endl;
   }
   //    conn->shutdown(); // 模拟http的短链接服务，由rpcprovider主动断开连接  //改为长连接，不主动断开
-}
-
-RpcProvider::~RpcProvider() {
-  std::cout << "[func - RpcProvider::~RpcProvider()]: ip和port信息：" << m_muduo_server->ipPort() << std::endl;
-  m_eventLoop.quit();
-  //    m_muduo_server.   怎么没有stop函数，奇奇怪怪，看csdn上面的教程也没有要停止，甚至上面那个都没有
 }

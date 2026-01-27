@@ -277,7 +277,7 @@ void demoPoolStats(RpcConnectionPool::ptr pool)
 
 int main(int argc, char **argv)
 {
-    std::string ip = "127.0.0.1";
+    std::string ip = "127.0.1.1";
     short port = 7788;
 
     if (argc >= 3)
