@@ -9,12 +9,13 @@
 #include <time.h>
 #include <unistd.h>
 
-namespace monsoon {
+namespace monsoon
+{
 // 当前线程是否hook
 bool is_hook_enable();
 // 设置当前线程hook
 void set_hook_enable(bool flag);
-}  // namespace monsoon
+} // namespace monsoon
 
 extern "C" {
 // sleep

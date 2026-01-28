@@ -17,8 +17,8 @@
 
 namespace rpc {
 
-AsyncMprpcChannel::AsyncMprpcChannel(const std::string& ip, short port, 
-                                     bool connectNow, int ioThreads)
+AsyncMprpcChannel::AsyncMprpcChannel(const std::string& ip, short port,
+                                     bool connectNow, int ioThreads, bool useFiberIO)
     : clientFd_(-1)
     , ip_(ip)
     , port_(port)
@@ -26,8 +26,14 @@ AsyncMprpcChannel::AsyncMprpcChannel(const std::string& ip, short port,
     , nextCallId_(1)
     , defaultTimeoutMs_(5000)  // 默认5秒超时
     , running_(true)
-    , nonBlocking_(true) {
+    , nonBlocking_(true)
+    , useFiberIO_(useFiberIO)
+    , timeoutCheckIntervalMs_(10) {
     
+    if (useFiberIO_) {
+        startFiberIO(ioThreads);
+    }
+
     if (connectNow) {
         std::string errMsg;
         bool connected = newConnect(ip_.c_str(), port_, &errMsg);
@@ -42,15 +48,18 @@ AsyncMprpcChannel::AsyncMprpcChannel(const std::string& ip, short port,
     }
 
     // 启动I/O线程
-    for (int i = 0; i < ioThreads; ++i) {
-        ioThreads_.emplace_back(&AsyncMprpcChannel::ioThreadFunc, this);
+    if (!useFiberIO_) {
+        for (int i = 0; i < ioThreads; ++i) {
+            ioThreads_.emplace_back(&AsyncMprpcChannel::ioThreadFunc, this);
+        }
     }
 }
 
 AsyncMprpcChannel::AsyncMprpcChannel(const std::string& serviceName,
                                      std::shared_ptr<ServiceDiscovery> discovery,
                                      const std::string& hashKey,
-                                     int ioThreads)
+                                     int ioThreads,
+                                     bool useFiberIO)
     : clientFd_(-1)
     , port_(0)
     , serviceName_(serviceName)
@@ -60,11 +69,19 @@ AsyncMprpcChannel::AsyncMprpcChannel(const std::string& serviceName,
     , nextCallId_(1)
     , defaultTimeoutMs_(5000)
     , running_(true)
-    , nonBlocking_(true) {
+    , nonBlocking_(true)
+    , useFiberIO_(useFiberIO)
+    , timeoutCheckIntervalMs_(10) {
     
+    if (useFiberIO_) {
+        startFiberIO(ioThreads);
+    }
+
     // 启动I/O线程
-    for (int i = 0; i < ioThreads; ++i) {
-        ioThreads_.emplace_back(&AsyncMprpcChannel::ioThreadFunc, this);
+    if (!useFiberIO_) {
+        for (int i = 0; i < ioThreads; ++i) {
+            ioThreads_.emplace_back(&AsyncMprpcChannel::ioThreadFunc, this);
+        }
     }
 }
 
@@ -72,10 +89,19 @@ AsyncMprpcChannel::~AsyncMprpcChannel() {
     running_ = false;
     
     // 等待I/O线程结束
-    for (auto& thread : ioThreads_) {
-        if (thread.joinable()) {
-            thread.join();
+    if (!useFiberIO_) {
+        for (auto& thread : ioThreads_) {
+            if (thread.joinable()) {
+                thread.join();
+            }
         }
+    } else if (ioManager_) {
+        if (timeoutTimer_) {
+            timeoutTimer_->cancel();
+            timeoutTimer_.reset();
+        }
+        ioManager_->stop();
+        ioManager_.reset();
     }
     
     closeConnection();
@@ -148,12 +174,18 @@ bool AsyncMprpcChannel::newConnect(const char* ip, uint16_t port, std::string* e
     std::lock_guard<std::mutex> lock(mutex_);
     clientFd_ = clientfd;
     DPrintf("[AsyncMprpcChannel] 连接成功 ip:%s port:%d", ip, port);
+    if (useFiberIO_) {
+        registerReadEvent();
+    }
     return true;
 }
 
 void AsyncMprpcChannel::closeConnection() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (clientFd_ != -1) {
+        if (useFiberIO_ && ioManager_ && running_) {
+            ioManager_->cancelAll(clientFd_);
+        }
         close(clientFd_);
         clientFd_ = -1;
     }
@@ -530,6 +562,110 @@ void AsyncMprpcChannel::ioThreadFunc() {
     }
     
     delete[] buffer;
+}
+
+void AsyncMprpcChannel::startFiberIO(int ioThreads) {
+    if (ioManager_) {
+        return;
+    }
+    ioManager_ = std::make_shared<monsoon::IOManager>(ioThreads, false, "rpc-iomanager");
+    timeoutTimer_ = ioManager_->addTimer(timeoutCheckIntervalMs_, [this]() {
+        if (running_) {
+            checkTimeouts();
+        }
+    }, true);
+}
+
+void AsyncMprpcChannel::registerReadEvent() {
+    if (!ioManager_) {
+        return;
+    }
+    int fd = -1;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        fd = clientFd_;
+    }
+    if (fd == -1) {
+        return;
+    }
+    ioManager_->addEvent(fd, monsoon::READ, [this, fd]() {
+        handleReadable(fd);
+    });
+}
+
+void AsyncMprpcChannel::handleReadable(int fd) {
+    if (!running_) {
+        return;
+    }
+    const int BUFFER_SIZE = 65536;
+    char buffer[BUFFER_SIZE];
+    bool needReRegister = true;
+
+    while (true) {
+        ssize_t recvLen = recv(fd, buffer, BUFFER_SIZE, MSG_DONTWAIT);
+        if (recvLen > 0) {
+            std::shared_ptr<AsyncCallContext> context;
+            {
+                std::lock_guard<std::mutex> lock(pendingMutex_);
+                if (!pendingCalls_.empty()) {
+                    auto it = pendingCalls_.begin();
+                    context = it->second;
+                    pendingCalls_.erase(it);
+                }
+            }
+
+            if (context) {
+                if (context->response && context->response->ParseFromArray(buffer, recvLen)) {
+                    context->future->complete(RpcStatus::SUCCESS, context->response);
+                    if (context->done) {
+                        context->done->Run();
+                    }
+                } else {
+                    std::string errMsg = "parse response error";
+                    if (context->controller) {
+                        context->controller->SetFailed(errMsg);
+                    }
+                    context->future->complete(RpcStatus::FAILED, nullptr, errMsg);
+                    if (context->done) {
+                        context->done->Run();
+                    }
+                }
+            }
+            continue;
+        }
+
+        if (recvLen == 0) {
+            DPrintf("[AsyncMprpcChannel] 连接被关闭");
+            closeConnection();
+            std::vector<std::shared_ptr<AsyncCallContext>> allCalls;
+            {
+                std::lock_guard<std::mutex> lock(pendingMutex_);
+                for (auto& pair : pendingCalls_) {
+                    allCalls.push_back(pair.second);
+                }
+                pendingCalls_.clear();
+            }
+            for (auto& ctx : allCalls) {
+                ctx->future->complete(RpcStatus::FAILED, nullptr, "Connection closed");
+                if (ctx->done) {
+                    ctx->done->Run();
+                }
+            }
+            needReRegister = false;
+            break;
+        }
+
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            break;
+        }
+
+        DPrintf("[AsyncMprpcChannel] recv error: %d", errno);
+        break;
+    }
+
+    if (needReRegister && running_) {
+        registerReadEvent();
+    }
 }
 
 }  // namespace rpc

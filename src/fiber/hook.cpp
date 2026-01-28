@@ -162,11 +162,7 @@ extern "C" {
 HOOK_FUN(XX);
 #undef XX
 
-/**
- * \brief
- * \param seconds 睡眠的秒数
- * \return
- */
+
 unsigned int sleep(unsigned int seconds)
 {
     // std::cout << "HOOK SLEEP" << std::endl;

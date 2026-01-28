@@ -1,16 +1,13 @@
+#include "monsoon.h"
 #include <iostream>
 #include <vector>
-#include "monsoon.h"
 
 void func1()
 {
     std::cout << "name: " << monsoon::Thread::GetThis()->GetName() << ",id: " << monsoon::GetThreadId() << std::endl;
 }
 
-void func2()
-{
-    std::cout << "name: " << monsoon::Thread::GetName() << ",id: " << monsoon::GetThreadId() << std::endl;
-}
+void func2() { std::cout << "name: " << monsoon::Thread::GetName() << ",id: " << monsoon::GetThreadId() << std::endl; }
 
 int main(int argc, char **argv)
 {

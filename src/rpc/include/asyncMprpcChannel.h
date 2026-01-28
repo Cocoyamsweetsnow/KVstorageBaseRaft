@@ -6,6 +6,7 @@
 #include <google/protobuf/service.h>
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -15,6 +16,7 @@
 #include <unordered_map>
 
 #include "rpcFuture.h"
+#include "iomanager.hpp"
 
 class ServiceDiscovery;
 
@@ -40,7 +42,8 @@ public:
     using ptr = std::shared_ptr<AsyncMprpcChannel>;
 
     // 构造函数：直接指定IP和端口
-    AsyncMprpcChannel(const std::string &ip, short port, bool connectNow = true, int ioThreads = 1);
+    AsyncMprpcChannel(const std::string &ip, short port, bool connectNow = true, int ioThreads = 1,
+                      bool useFiberIO = false);
 
     // 构造函数：通过服务发现获取服务地址
     // serviceName: 服务名称
@@ -50,7 +53,8 @@ public:
     AsyncMprpcChannel(const std::string& serviceName,
                       std::shared_ptr<ServiceDiscovery> discovery,
                       const std::string& hashKey = "",
-                      int ioThreads = 1);
+                      int ioThreads = 1,
+                      bool useFiberIO = false);
 
     ~AsyncMprpcChannel();
 
@@ -107,6 +111,11 @@ private:
     // I/O线程函数
     void ioThreadFunc();
 
+    // 协程I/O管理
+    void startFiberIO(int ioThreads);
+    void registerReadEvent();
+    void handleReadable(int fd);
+
     // 处理接收到的响应
     void handleResponse(uint64_t callId, const char *data, int size);
 
@@ -140,6 +149,12 @@ private:
     // I/O线程
     std::vector<std::thread> ioThreads_;
     std::atomic<bool> running_;
+
+    // 协程I/O模式
+    bool useFiberIO_;
+    int timeoutCheckIntervalMs_;
+    std::shared_ptr<monsoon::IOManager> ioManager_;
+    monsoon::Timer::ptr timeoutTimer_;
 
     // 非阻塞模式标志
     bool nonBlocking_;

@@ -188,11 +188,10 @@ void Raft::doElection()
             requestVoteArgs->set_lastlogterm(lastLogTerm);
             auto requestVoteReply = std::make_shared<raftRpcProctoc::RequestVoteReply>();
 
-            //使用匿名函数执行避免其拿到锁
-
-            std::thread t(&Raft::sendRequestVote, this, i, requestVoteArgs, requestVoteReply,votedNum); 
-            // 创建新线程并执行b函数，并传递参数
-            t.detach();
+            // 使用协程调度发送投票请求，避免线程开销
+            m_ioManager->scheduler([this, i, requestVoteArgs, requestVoteReply, votedNum]() {
+                this->sendRequestVote(i, requestVoteArgs, requestVoteReply, votedNum);
+            });
         }
     }
 }
@@ -218,12 +217,13 @@ void Raft::doHeartBeat()
                     "Leader的心跳定时器触发了 index:{%d}\n",
                     m_me, i);
             myAssert(m_nextIndex[i] >= 1, format("rf.nextIndex[%d] = {%d}", i, m_nextIndex[i]));
-            //日志压缩加入后要判断是发送快照还是发送AE
+            // 日志压缩加入后要判断是发送快照还是发送AE
             if (m_nextIndex[i] <= m_lastSnapshotIncludeIndex)
             {
-                std::thread t(&Raft::leaderSendSnapShot, this,
-                              i); // 创建新线程并执行b函数，并传递参数
-                t.detach();
+                // 使用协程调度发送快照
+                m_ioManager->scheduler([this, i]() {
+                    this->leaderSendSnapShot(i);
+                });
                 continue;
             }
             //构造发送值
@@ -265,9 +265,10 @@ void Raft::doHeartBeat()
                 std::make_shared<raftRpcProctoc::AppendEntriesReply>();
             appendEntriesReply->set_appstate(Disconnected);
 
-            std::thread t(&Raft::sendAppendEntries, this, i, appendEntriesArgs, appendEntriesReply,
-                          appendNums); // 创建新线程并执行b函数，并传递参数
-            t.detach();
+            // 使用协程调度发送日志追加请求
+            m_ioManager->scheduler([this, i, appendEntriesArgs, appendEntriesReply, appendNums]() {
+                this->sendAppendEntries(i, appendEntriesArgs, appendEntriesReply, appendNums);
+            });
         }
         m_lastResetHearBeatTime = now(); // leader发送心跳，就不是随机时间了
     }
@@ -439,11 +440,12 @@ void Raft::InstallSnapshot(const raftRpcProctoc::InstallSnapshotRequest *args,
     msg.SnapshotTerm = args->lastsnapshotincludeterm();
     msg.SnapshotIndex = args->lastsnapshotincludeindex();
 
-    std::thread t(&Raft::pushMsgToKvServer, this,
-                  msg); // 创建新线程并执行b函数，并传递参数
-    t.detach();
+    // 使用协程调度推送消息到KvServer
+    m_ioManager->scheduler([this, msg]() {
+        this->pushMsgToKvServer(msg);
+    });
 
-    //持久化
+    // 持久化
     m_persister->Save(persistData(), args->data());
 }
 
@@ -814,8 +816,10 @@ bool Raft::sendRequestVote(int server, std::shared_ptr<raftRpcProctoc::RequestVo
             m_nextIndex[i] = lastLogIndex + 1; //有效下标从1开始，因此要+1
             m_matchIndex[i] = 0;               //每换一个领导都是从0开始，见fig2
         }
-        std::thread t(&Raft::doHeartBeat, this); //马上向其他节点宣告自己就是leader
-        t.detach();
+        // 使用协程调度，马上向其他节点宣告自己就是leader
+        m_ioManager->scheduler([this]() {
+            this->doHeartBeat();
+        });
 
         persist();
     }
@@ -1033,24 +1037,10 @@ void Raft::init(std::vector<std::shared_ptr<RaftRpcUtil>> peers, int me, std::sh
 
     m_ioManager = std::make_unique<monsoon::IOManager>(FIBER_THREAD_NUM, FIBER_USE_CALLER_THREAD);
 
-    // start ticker fiber to start elections
-    // 启动三个循环定时器
-    // todo:原来是启动了三个线程，现在是直接使用了协程，三个函数中leaderHearBeatTicker
-    // 、electionTimeOutTicker执行时间是恒定的，applierTicker时间受到数据库响应延迟和两次apply之间请求数量的影响，这个随着数据量增多可能不太合理，最好其还是启用一个线程。
+    // 使用协程调度三个循环定时任务，替换原来的线程实现
     m_ioManager->scheduler([this]() -> void { this->leaderHearBeatTicker(); });
     m_ioManager->scheduler([this]() -> void { this->electionTimeOutTicker(); });
-
-    std::thread t3(&Raft::applierTicker, this);
-    t3.detach();
-
-    // std::thread t(&Raft::leaderHearBeatTicker, this);
-    // t.detach();
-    //
-    // std::thread t2(&Raft::electionTimeOutTicker, this);
-    // t2.detach();
-    //
-    // std::thread t3(&Raft::applierTicker, this);
-    // t3.detach();
+    m_ioManager->scheduler([this]() -> void { this->applierTicker(); });
 }
 
 std::string Raft::persistData()
@@ -1079,7 +1069,7 @@ void Raft::readPersist(std::string data)
     }
     std::stringstream iss(data);
     boost::archive::text_iarchive ia(iss);
-    // read class state from archive
+    
     BoostPersistRaftNode boostPersistRaftNode;
     ia >> boostPersistRaftNode;
 

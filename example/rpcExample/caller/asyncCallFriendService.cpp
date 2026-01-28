@@ -271,7 +271,7 @@ int main(int argc, char **argv)
     std::cout << "连接服务器: " << ip << ":" << port << "\n";
 
     // 创建异步RPC通道
-    auto channel = std::make_shared<AsyncMprpcChannel>(ip, port, true, 2);
+    auto channel = std::make_shared<AsyncMprpcChannel>(ip, port, true, 2, true);
 
     if (!channel->isConnected())
     {
